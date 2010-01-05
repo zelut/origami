@@ -1,0 +1,1061 @@
+#!/bin/bash
+#
+# origami
+#
+# Copyright (C) 2007-2009 Christer Edwards <christer.edwards@ubuntu.com>
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+#
+
+function origami_install { # 
+
+origami_root_check
+
+    # this is a fix for bug #200026, which is based on how Ubuntu/Debian changed
+    # useradd.  This tests for the normal distros (in terms of useradd) vs the
+    # abnormal and then creates the system user properly.
+    if ( lsb_release -d | egrep "(Red Hat)|CentOS|Fedora|SUSE|openSUSE" ) &>/dev/null; then
+        USERADDITION="standard"
+    elif egrep "(Red Hat)|CentOS|Fedora|SUSE|openSUSE" /etc/redhat-release &>/dev/null; then
+        USERADDITION="standard"
+    elif grep "Foresight" /etc/distro-release &>/dev/null; then
+        USERADDITION="standard"
+    elif [ -e /etc/arch-release ]; then
+        USERADDITION="standard"
+    elif [ -e /etc/gentoo-release ]; then
+        USERADDITION="standard"
+    elif ( lsb_release -d | egrep "Ubuntu|Debian|Mint|gNewSense" ) &>/dev/null; then
+        USERADDITION="nonstandard"
+    elif egrep "Ubuntu|Debian|Mint" /etc/lsb-release &>/dev/null; then
+        USERADDITION="nonstandard"
+    fi
+    
+    # this is a workaround for bug #187218
+    if [[ $(getent passwd root | cut -d: -f7) != "/bin/bash" ]]; then
+        echo "###############################################" 1>&2
+        echo "#    the root user shell must be /bin/bash    #" 1>&2
+        echo "###############################################" 1>&2
+        exit 1
+    fi
+
+    if [[ -x /etc/init.d/origami && -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI APPEARS TO ALREADY BE INSTALLED. ABORTING!'
+    fi
+
+    # creating system user, testing for major distributions
+    if [ "${USERADDITION}" == "standard" ]; then
+        useradd -r -m -d /var/lib/origami -s /bin/bash origami &>/dev/null || origami_show_error 'USER CREATION FAILED!'
+    elif [ "${USERADDITION}" == "nonstandard" ]; then
+        adduser --system --home /var/lib/origami --shell /bin/bash origami &>/dev/null || origami_show_error 'USER CREATION FAILED!'
+    else
+        origami_show_error 'POSSIBLE UNKNOWN DISTRIBUTION. PLEASE REPORT'
+    fi
+
+    # create the client.cfg and system cron job
+    origami_create_config
+    origami_create_cron
+
+    # changing current working directory
+    if ([[ -r /var/lib/origami && -d /var/lib/origami && -x /var/lib/origami ]]); then
+    	cd /var/lib/origami/
+    else
+	origami_show_error 'CAN NOT CHANGE INTO DIRECTORY: /var/lib/origami!'
+    fi
+
+    # this will check for a pre-downloaded finstall file (shared from server)
+    # and use that to speed up the wget download. (0.6.6.1)
+    if [ -r /tmp/finstall ]; then
+        cp /tmp/finstall /var/lib/origami/ || origami_show_warning 'UNABLE TO COPY PRE-FETCHED FILE, ATTEMPTING WGET INSTEAD...'
+    fi
+
+    # this will check for pre-downloaded FAH504-Linux.exe file (shared from
+    # server) and use that to speed up the wget download. (0.6.6.1)
+    if [ -x /tmp/FAH504-Linux.exe ]; then
+        cp /tmp/FAH504-Linux.exe /var/lib/origami/foldingathome/ || origami_show_warning 'UNABLE TO COPY PRE-FETCHED FILE, ATTEMPTING WGET INSTEAD...'
+    fi
+
+    # pulling down installer file to newly created directories
+    # if the above copy was successful this should speed the process.
+    FILE="http://ra.vendomar.ee/~ivo/finstall"
+    DESTFILE="/var/lib/origami/finstall"
+
+    if [ -x $(which wget) ]; then
+        wget --quiet -O $DESTFILE -c $FILE || origami_show_error 'WGET RETRIEVAL FAILED!'
+    elif [ -x $(which curl) ]; then
+        curl -o $DESTFILE --silent $FILE || origami_show_error 'CURL RETRIEVAL FAILED!'
+    else
+        origami_show_error 'INSTALLER RETRIEVAL FAILED. YOU NEED WGET OR CURL'
+    fi
+
+    # changing ownership on finstall
+    chown -R origami. finstall &>/dev/null || origami_show_error 'UNABLE TO CHANGE OWNERSHIP'
+    chmod u+x finstall &>/dev/null || origami_show_error 'UNABE TO SET EXECUTE PERMISSIONS'
+
+    # running installer on auto-pilot
+    echo "INSTALLING... PLEASE BE PATIENT"
+    if [ "${PROCESSOR}" == "amd64" ]; then
+        su - origami -c "./finstall auto smp skip3rd" &>/dev/null || origami_show_error 'SMP INSTALLER FAILED'
+    else
+        su - origami -c "./finstall auto skip3rd" &>/dev/null || origami_show_error 'INSTALLER FAILED'
+    fi
+
+    # moving config file into place / updating config
+    for CONFIG in $(ls -d foldingathome/CPU*/); do 
+        NUM=$(echo "${CONFIG}" | cut -c18 -)
+        cp client.cfg ${CONFIG}
+        sed -i "s/machineid=1/machineid=${NUM}/g" ${CONFIG}/client.cfg
+    done
+
+    # setting the username and team
+    if [[ ! -z "${ORIGAMIUSER}" || ! -z "${ORIGAMITEAM}" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do 
+        sed -i "s/username=Anonymous/username="$ORIGAMIUSER"/g" ${CONFIG}/client.cfg
+        sed -i "s/team=0/team="$ORIGAMITEAM"/g" ${CONFIG}/client.cfg
+    done
+    fi
+
+    # setting the port information
+    if [[ "${PORT}" != "8080" && "${HOST}" != "localhost" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+	sed -i "s/active=no/active=yes/g" ${CONFIG}/client.cfg
+	sed -i "s/port=8080/port=${PORT}/g" ${CONFIG}/client.cfg
+	sed -i "s/host=localhost/host=${HOST}/g" ${CONFIG}/client.cfg
+    done
+    fi
+
+    # setting passkey
+    if [ ! -z "${PASSKEY}" ]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+        sed -i "s/passkey=/passkey="$PASSKEY"/g" ${CONFIG}/client.cfg
+    done
+    fi
+
+    # setting bigpackets value
+    BIGPACKETS=$(echo ${BIGPACKETS} | tr [A-Z] [a-z])
+    if [[ "${BIGPACKETS}" != "small" && "${BIGPACKETS}" != "normal" && "${BIGPACKETS}" != "big" ]]; then
+        origami_show_error 'BIGPACKETS OPTION REQUIRES: small, normal or big'
+    fi
+
+    if [[ "${BIGPACKETS}" == "big" || "${BIGPACKETS}" == "small" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+        sed -i "s/bigpackets=normal/bigpackets="$BIGPACKETS"/g" ${CONFIG}/client.cfg
+    done
+    fi
+
+    if [[ "${COREPRIORITY}" == "low" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+	sed -i "s/priority=0/priority=96/g" ${CONFIG}/client.cfg
+    done
+    fi
+
+    # this fixes bug #220296
+    mv foldingathome/folding foldingathome/origami || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
+    sed -i "98,124s/folding/origami/g" foldingathome/installService || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
+    sed -i "60,67s/folding/origami/g" foldingathome/uninstallService || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
+
+    ### this is a pending fix for the shutdown time bug #372111 ###
+    sed -i "s/35/5/" foldingathome/origami || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
+
+    # lets make sure everything else is owned properly
+    if [ -e /etc/arch-release ]; then
+        chown -R origami.users /var/lib/origami &>/dev/null || origami_show_error 'UNABEL TO CHANGE OWNERSHIP'
+        chmod 755 /var/lib/origami/ &>/dev/null
+    else
+        chown -R origami. /var/lib/origami/ &>/dev/null || origami_show_error 'UNABLE TO CHANGE OWNERSHIP'
+    fi
+
+    # starting installService
+    /var/lib/origami/foldingathome/installService &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO INSTALL!'
+
+    # starting init.d script
+    if [ -e /etc/arch-release ]; then
+        /etc/rc.d/origami start &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO START!'
+    else
+        /etc/init.d/origami start &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO START!'
+    fi
+
+    # minor cleanup for kickstart installations - harmless if deploying regularly
+    if [ -w /etc/rc.local ]; then
+        sed -i.origami "/origami-${VERSION}/d" /etc/rc.local
+    elif [ -w /etc/init.d/boot.after ]; then
+        sed -i.origami "/origami-${VERSION}/d" /etc/init.d/boot.after
+    fi
+
+    echo 'INSTALLATION SUCCESSFUL'
+
+exit 0
+} # 
+
+function origami_migrate { #
+
+origami_root_check
+
+    # check to see if migration is even needed
+    if [[ ! -x /etc/init.d/folding || ! -r /var/lib/folding/ ]];then
+	origami_show_error 'MIGRATION DOES NOT APPEAR TO BE NEEDED'
+    fi
+
+    # stopping local service
+    echo "stopping the local service"
+    /etc/init.d/folding stop &>/dev/null || origami_show_error 'UNABLE TO STOP LOCAL SERVICE!'
+
+    # archiving folding.sh data to .origami
+    echo "archiving local data. storing data in ~/.origami"
+
+    pushd /var/lib/folding/
+    tar -cjf $(hostname)-$(date +%F).tar.bz2 * &>/dev/null || origami_show_error 'UNABLE TO ARCHIVE ORIGAMI CONTENTS'
+
+    # lets make sure the .origami storage folder is setup
+    if [ ! -d ~/.origami/ ]; then
+        mkdir ~/.origami || origami_show_error 'UNABLE TO CREATE ~/.origami DIRECTORY! PLEASE CREATE MANUALLY.'
+    fi
+
+    # move the archived folding.sh files to the .origami folder
+    mv $(hostname)-$(date +%F).tar.bz2 ~/.origami/ || origami_show_error 'UNABLE TO MOVE ARCHIVE TO ~/.origami'
+    popd
+
+    # now we'll start uninstalling the folding.sh
+    echo 'UNINSTALLING folding.sh. PLEASE BE PATIENT.'
+
+    # uninstall the /etc/init.d/folding script
+    /var/lib/folding/foldingathome/uninstallService &>/dev/null || origami_show_warning 'UNABLE TO REMOVE STARTUP SCRIPT. PLEASE TRY MANUALLY'
+
+    # get rid of the folding user & home folder data
+    userdel -r folding &>/dev/null || origami_show_warning 'USER REMOVAL FAILED!'
+
+    # removing any remaining origami files
+    if ([ -w /var/lib/folding ] && ! (rm -rf /var/lib/folding) &>/dev/null ); then
+    	origami_show_warning 'THERE MAY BE FILES REMAINING IN /var/lib/folding'
+    fi
+
+    # previous installation is gone, now we can worry about installing origami
+    # notice we do this without any install switches.  The archived data has those settings after all.
+    # lets also try to cover bases for those installed via package & those going manual
+    if [ $(which origami 2>/dev/null) == "/usr/bin/origami" ]; then
+	$(which origami) install &>/dev/null || origami_show_error 'ORIGAMI INSTALLATION FAILED'
+    elif [ $(which origami) != "/usr/bin/origami" ]; then
+	./origami install &>/dev/null || origami_show_error 'ORIGAMI INSTALLATION FAILED'
+    else
+	origami_show_error 'UNABLE TO LOCATE origami FOR NEW INSTALLATION'
+    fi
+
+    # now assuming the install worked we need to migrate the archived data
+    # making sure both installations are stopped
+    /etc/init.d/origami stop &>/dev/null | origami_show_error 'UNABLE TO STOP SERVICE'
+
+    # restoring the data and restarting the service
+    pushd /var/lib/origami/
+    tar -xf ~/.origami/$(hostname)-*.tar.bz2 &>/dev/null || origami_show_error 'UNABLE TO RESTORE LOCAL ORIGAMI DATA!'
+    chown -R origami. /var/lib/origami/ &>/dev/null || origami_show_error 'UNABLE TO CHANGE OWNERSHIP'
+    popd
+
+    # lets restart the new installation now that the old data is in place
+    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+
+    # that should cover it
+    echo "Migration should be complete. Run 'origami monitor' to verify continued progress."
+    echo 'Please report feedback to https://bugs.launchpad.net/origami'
+
+exit 0
+}
+
+function origami_erase { # 
+
+origami_root_check
+
+    echo 'UNINSTALLING... PLEASE BE PATIENT.'
+
+    # stopping the origami client if running
+    # added check to see if startup script even exists and is executable
+    if [ -x /etc/init.d/origami ]; then
+        /etc/init.d/origami stop &>/dev/null || origami_show_warning 'UNABLE TO STOP SERVICE. PLEASE TRY MANUALLY'
+    elif [ -x /etc/rc.d/origami ]; then
+        /etc/rc.d/origami stop &>/dev/null || origami_show_warning 'UNABLE TO STOP SERVICE.  PLEASE TRY MANUALLY'
+    fi
+
+    # removing init script
+    /var/lib/origami/foldingathome/uninstallService &>/dev/null || origami_show_warning 'UNABLE TO REMOVE STARTUP SCRIPT. PLEASE TRY MANUALLY'
+    userdel -r origami &>/dev/null || origami_show_warning 'USER REMOVAL FAILED!'
+
+    # removing any remaining origami files
+    if ([ -w /var/lib/origami ] && ! (rm -rf /var/lib/origami) &>/dev/null ); then
+    	origami_show_warning 'THERE MAY BE FILES REMAINING IN /var/lib/origami'
+    fi
+
+    echo 'Please report feedback at https://bugs.launchpad.net/origami'
+
+exit 0
+} # 
+
+function origami_deploy { # 
+
+origami_root_check
+
+    if [ -z "${PASSKEY}" ]; then
+        origami_show_error 'NETWORK DEPLOYMENT REQUIRES PASSKEY VALUE. SEE: http://folding.stanford.edu/English/FAQ-passkey'
+    fi
+
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error '~/.origamirc IS REQUIRED FOR NETWORK DEPLOYMENT. SEE README!'
+    fi
+
+    echo "Beginning network based deployment..."
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc);
+    do
+        # if origami is installed locally we'll copy needed files to MACHINES
+        # The install function now also checks for these files
+        if [ -x /var/lib/origami/finstall ]; then
+            scp -q /var/lib/origami/finstall root@${MACHINES}:/tmp/
+        fi
+
+        # this is the origami @ home client itself.  Does this violate the
+        # distribution license? :)
+        if [ -x /var/lib/origami/foldingathome/FAH504-Linux.exe ]; then
+            scp -q /var/lib/origami/foldingathome/FAH504-Linux.exe root@${MACHINES}:/tmp/
+        fi
+
+        # TODO: add test statement to check for existing origami file.
+        echo "copying installer to ${MACHINES}..."
+	if [ -x /usr/bin/origami ]; then
+    	    scp -q /usr/bin/origami root@${MACHINES}:/usr/bin/
+	elif [ -x ./origami ]; then
+	    scp -q ./origami root@${MACHINES}:/usr/bin/
+	else
+	    origami_show_error 'UNABLE TO FIND LOCAL ORIGAMI EXECUTABLE'
+	fi
+    
+    	echo "running installer on ${MACHINES}"
+    	ssh ${SSHOPTS} root@${MACHINES} "origami install -c "$CRON" -p "$PROCESSOR" -P "$PORT" -H "$HOST" -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" -b "$BIGPACKETS" -k "$PASSKEY" &> /tmp/origami.log"
+
+    echo "Installation of ${MACHINES} will be finished momentarily."
+    done
+
+    echo "If you experienced any issues during this network deployment"
+    echo "please submit a bug to https://bugs.launchpad.net/origami."
+    
+exit 0
+} # 
+
+function origami_local_archive { # 
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    if [ ! -d ~/.origami/ ]; then
+        mkdir ~/.origami || origami_show_error 'UNABLE TO CREATE ~/.origami DIRECTORY! PLEASE CREATE MANUALLY.'
+    fi
+
+    # stopping local service
+    echo "stopping the local service"
+    /etc/init.d/origami stop &>/dev/null || origami_show_error 'UNABLE TO STOP LOCAL SERVICE!'
+
+    # archiving data
+    echo "archiving local data. storing data in ~/.origami"
+    tar -cjf ~/.origami/$(hostname)-$(date +%F).tar.bz2 /var/lib/origami/ &>/dev/null || origami_show_error 'UNABLE TO ARCHIVE ORIGAMI CONTENTS'
+
+    # restarting local service
+    echo "restarting the local service"
+    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+
+exit 0
+} # 
+
+function origami_network_archive { # 
+
+origami_root_check
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+        ssh ${SSHOPTS} root@${MACHINES} "origami archive &>/dev/null || echo 'UNABLE TO ARCHIVE ORIGAMI CONTENTS.'"
+
+        echo "copying ${MACHINES} archive to ~/.origami/"
+        scp -q root@${MACHINES}:~/.origami/${MACHINES}-$(date +%F).tar.bz2 ~/.origami/
+    done
+
+exit 0
+} # 
+
+function origami_local_restore { # 
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    # stopping, restoring and restarting the service
+    echo "stopping the local service"
+    /etc/init.d/origami stop &>/dev/null || origami_show_error 'UNABLE TO STOP LOCAL SERVICE!'
+    echo "restoring local archive"
+    tar -C / -xf ~/.origami/$(hostname)-*.tar.bz2 &>/dev/null || origami_show_error 'UNABLE TO RESTORE LOCAL ORIGAMI DATA!'
+    echo "restarting local service"
+    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+
+exit 0
+} # 
+
+function origami_network_restore { # 
+
+origami_root_check
+
+    if [[ ! -d ~/.origami/ || ! -f ~/.origamirc ]]; then
+        origami_show_error '~/.origamirc IS REQUIRED FOR NETWORK RESTORATION.'
+    fi
+
+    # dumping out the list of machines from the ~/.origamirc
+    for MACHINES in $(ls ~/.origami/ | cut -d- -f1)
+    do
+        echo "stopping origami service on ${MACHINES}..."
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami stop &>/dev/null || echo 'UNABLE TO STOP REMOTE SERVICE.'"
+
+	# added removal of remote archive
+        echo "restoring origami data on ${MACHINES}..."
+	scp -q  ~/.origami/${MACHINES}-*.tar.bz2 root@${MACHINES}:~
+        ssh ${SSHOPTS} root@${MACHINES} "tar -C / -xf ~/${MACHINES}-*.tar.bz2 &>/dev/null || echo 'UNABLE TO RESTORE ORIGAMI DATA!'"
+	ssh ${SSHOPTS} root@${MACHINES} "rm ~/${MACHINES}-$(date +%F).tar.bz2 &>/dev/null"
+
+        echo "restarting origami service on ${MACHINES}..."
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE!'"
+    done
+
+exit 0
+} # 
+
+function origami_local_name { # 
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    origamihome=$(awk -F: '/origami/{print $6}' /etc/passwd 2>/dev/null)
+
+    if [[ -z "${ORIGAMIUSER}" || -z "${ORIGAMITEAM}" ]]; then
+        origami_show_error 'RENAMING REQUIRES USERNAME AND TEAM AS COMMAND ARGUMENTS.'
+    fi
+
+    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+        sed -i "s/username=Anonymous/username="${ORIGAMIUSER}"/g" ${CONFIG}/client.cfg
+        sed -i "s/team=0/team="${ORIGAMITEAM}"/g" ${CONFIG}/client.cfg
+    done
+        echo "The client.cfg has been updated with your new information. A backup has been made."
+
+    # safely deleting auto-regenerated .html file for progress updates
+    # this fixes bug #175460
+    for myorigami in $(ls ${origamihome}/foldingathome/CPU*/MyFolding.html); do
+	rm ${myorigami} &>/dev/null || origami_show_error 'MyFolding.html RETAINING OLD INFORMATION'
+    done
+
+    # restarting init.d script
+    echo "Restarting the origami service with your changes."
+    /etc/init.d/origami restart &>/dev/null || origami_show_error 'UNABLE TO RESTART LOCAL SERVICE!'
+
+exit 0
+} # 
+
+function origami_proxy { #
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    origamihome=$(awk -F: '/origami/{print $6}' /etc/passwd 2>/dev/null)
+
+    if [[ -z "${PORT}" || -z "${HOST}" ]]; then
+        origami_show_error 'PROXY REQUIRES PORT AND HOST AS COMMAND ARGUMENTS.'
+    fi
+
+    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+	sed -i "s/active=no/active=yes/g" ${CONFIG}/client.cfg
+        sed -i "s/host=localhost/host=${HOST}/g" ${CONFIG}/client.cfg
+        sed -i "s/port=8080/port=${PORT}/g" ${CONFIG}/client.cfg
+    done
+
+    # restarting init.d script
+    echo "Restarting the origami service with your changes."
+    /etc/init.d/origami restart &>/dev/null || origami_show_error 'UNABLE TO RESTART LOCAL SERVICE!'
+
+} #
+
+function origami_network_name { # 
+
+origami_root_check
+
+    # making sure the config file exists for network archiving
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error 'NETWORK RENAMING REQUIRES THE ~/.origamirc CONFIG!'
+    fi
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+        echo "updating information on ${MACHINES}..." 
+        ssh ${SSHOPTS} root@${MACHINES} "origami name -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" || echo 'UNABLE TO UPDATE INFORMATION!'"
+    done
+
+exit 0
+
+} # 
+
+function origami_version { # 
+    echo
+    echo "Origami Version: $VERSION"
+    echo
+
+exit 0
+} # 
+
+function origami_usage { # 
+cat << EOF
+Usage: $0 [OPTION]
+Install Stanfords Folding @ Home client to a single machine or network of machines.
+Options:
+  install         install to the local machine
+                  (use 'install -u USERNAME -t TEAM' to automate naming)
+
+  deploy          deploy to machines over a network
+                  (root access via ssh required for network deployment.)
+                  (machines to be deployed read from ~/.origamirc.)
+                  (takes resolvable hostnames or IP addresses one per line.)
+                  (use 'deploy -u USERNAME -t TEAM' to automate naming)
+
+  archive         archive and collect data from local machine
+
+  network-archive archive and collect data from networked machines
+                  (same configuration and requirements as deploy above)
+                  (-u USERNAME -t TEAM not required for network-archive)
+
+  restore         restore collected origami data for local machine
+
+  network-restore restore collected origami data for networked machines
+                  (root access via ssh required for network restoration.)
+                  (currently reads hostnames from archives and restores archives)
+                  (to the machines they came from. TODO: specifying the date if)
+                  (there are multiple archives available in ~/.origami)
+
+  erase           erase local data and uninstall
+                  (this will remove all data - USE WITH CAUTION)
+
+  name            change the user and team
+                  (this will change what user or team get credit for work done)
+                  (syntax is 'name -u USERNAME -t TEAMNAME')
+
+  proxy           update the network information for use with a proxy
+                  (syntax is 'proxy -P port -H hostname')
+
+  network-name    change the user and team for networked machines
+                  (root access via ssh required for network renaming.)
+                  (machines to be renamed read from the ~/.origamirc.)
+                  (takes resolvable hostnames or IP addresses one per line.)
+                  (use 'network-name -u USERNAME -t TEAMNAME')
+
+  monitor         monitor the progress of your current assigned work unit(s)
+
+  network-monitor monitor the progress of networked machines
+
+  status          monitor the progress of your current assigned work unit(s)
+
+  network-status  monitor the progress of networked machines
+
+  start           start the local origami client
+
+  network-start	  start origami service on networked machines
+		  (machines read from ~/.origamirc)
+
+  stop            stop the local origami client
+
+  network-stop    stop origami service on networked machines
+		  (machines read from ~/.origamirc)
+
+  version         display origami version and exit
+
+  help            display this help and exit
+
+Originally created by Christer Edwards <christer.edwards@ubuntu.com>.
+This application released under the GPLv2 (see copyright)
+
+Report bugs to https://bugs.launchpad.net/origami
+
+EOF
+
+exit 0
+} # 
+
+function origami_create_config { # 
+
+origami_root_check
+
+# creating config file
+if ([ -w client.cfg ] && ! grep -qs 'username=' client.cfg ); then
+    origami_show_error 'client.cfg has unexpected contents. please check.'
+else
+cat << EOF > /var/lib/origami/client.cfg
+[settings]
+username=Anonymous
+team=0
+asknet=no
+machineid=1
+bigpackets=normal
+passkey=
+
+[http]
+active=no
+host=localhost
+port=8080
+
+[core]
+priority=0
+EOF
+
+fi
+} # 
+
+function origami_create_cron { # 
+
+origami_root_check
+
+# creating cron entry
+if [ $CRON == "1" ]; then
+cat << EOF > /var/lib/origami/origami.cron
+# uncomment the cron entries below to automate starting and stopping the
+# origami service during business hours
+
+0 8  * * * /etc/init.d/origami stop &>/dev/null
+0 17 * * * /etc/init.d/origami start &>/dev/null
+EOF
+else
+cat << EOF > /var/lib/origami/origami.cron
+# uncomment the cron entries below to automate starting and stopping the
+# origami service during business hours
+
+#0 8  * * * /etc/init.d/origami stop &>/dev/null
+#0 17 * * * /etc/init.d/origami start &>/dev/null
+EOF
+fi
+
+# importing and activating the created cron listings
+# removing it once its been imported into the cron system
+crontab -u origami /var/lib/origami/origami.cron &>/dev/null
+rm /var/lib/origami/origami.cron || origami_show_warning 'UNABLE TO DELETE INITIAL CRON FILE'
+
+} # 
+
+function origami_root_check { # 
+if [ $(id -u) -ne 0 ]; then
+    echo "origami: Permission Denied" 1>&2
+    echo "Try: sudo origami start" 1>&2
+    exit 1
+fi
+} # 
+
+function origami_sanity_checks { # 
+
+if [[ ! -x $(which wget) && ! -x $(which curl) ]]; then
+    echo "###############################################" 1>&2
+    echo "#   wget or curl are required to run origami  #" 1>&2
+    echo "###############################################" 1>&2
+    exit 1
+fi
+
+# this is used often enough, lets define it centrally
+SSHOPTS="-f -4 -o StrictHostKeyChecking=no"
+
+# define some default variables used by the installer
+ORIGAMIUSER=Anonymous
+PASSKEY=
+BIGPACKETS=normal
+ORIGAMITEAM=0
+PROCESSOR=i386
+CRON=0
+PORT=8080
+HOST=localhost
+COREPRIORITY=idle
+
+VERSION='0.7.3'
+
+} # 
+
+function origami_show_error { # 
+    echo "ERROR: $*" 1>&2
+    exit 1
+} # 
+
+function origami_show_warning { # 
+    echo "WARNING: $*" 1>&2
+} # 
+
+function origami_configure {
+
+origami_root_check
+
+    origamihome=$(awk -F: '/origami/{print $6}' /etc/passwd)
+
+    if [[ -x /var/lib/origami/foldingathome/fah6 ]]; then
+        for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do
+            pushd ${CONFIG} &>/dev/null
+            /var/lib/origami/foldingathome/fah6 -configonly
+            echo
+            echo "CONFIGURATION UPDATED."
+            popd &>/dev/null
+        done
+    else
+        origami_show_error 'FOLDING BINARY SEEMS TO BE MISSING. IS ORIGAMI INSTALLED?'
+    fi
+
+exit 0
+}
+
+function origami_local_monitor { # 
+    origamihome=$(awk -F: '/origami/{print $6}' /etc/passwd)
+
+    if [[ ! -x /etc/init.d/origami && ! -x /etc/rc.d/origami && ! -r ${origamihome}/foldingathome/CPU*/unitinfo.txt ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    echo "#########################################"
+    echo "current status of origami on $(hostname)"
+    echo "#########################################"
+    if [ -e /etc/arch-release ]; then
+        /etc/rc.d/origami status | grep 'Status of FAH client(s):' || origami_show_error 'UNABLE TO GET LOCAL STATUS'
+    else
+        /etc/init.d/origami status | grep 'Status of FAH client(s):' || origami_show_error 'UNABLE TO GET LOCAL STATUS'
+    fi
+    echo
+    # this gathers the username, team and completed units from all processors and puts it in a file
+    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+        NUM=$(echo "${CONFIG}" | cut -c35 -)
+	echo "Your Username: $(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+	echo "Your Team: $(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+	echo "Completed WU on CPU #${NUM}: $(grep 'local=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+    done
+    # this reads the file, and shows only unique lines
+    # this facilitates different usernames, teams or completed units to be reported
+    # on a per-processor basis.
+    cat /tmp/origami-status | sort | uniq
+
+    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+	ORIGAMIUSER=$(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)
+	ORIGAMITEAM=$(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)
+    done
+    echo
+    echo "User ranking URL:"
+    echo "http://kakaostats.com/t.php?filter=active&col=2&t="${ORIGAMITEAM}"&search_text="${ORIGAMIUSER}""
+    # we delete the file after we've reported the results so the next time we monitor
+    # we've started fresh
+    rm /tmp/origami-status &>/dev/null
+    echo
+
+    for CONFIG in $(ls -d "${origamihome}"/foldingathome/CPU*/); do
+        if [ -r "${CONFIG}"/unitinfo.txt ]; then
+            cat "${CONFIG}"/unitinfo.txt
+            echo
+        else
+            echo "No work units have been assigned yet. Please check status again later."
+        fi
+    done
+
+exit 0
+} # 
+
+function origami_network_monitor { # 
+
+origami_root_check
+
+    # making sure the config file exists for network archiving
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error 'NETWORK MONITORING REQUIRES THE ~/.origamirc CONFIG!'
+    fi
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+	clear
+	ssh ${SSHOPTS} root@${MACHINES} "origami monitor"
+	read -n1 -t2
+	read -n1 -t5 -p "Press any key to continue" CONTINUE
+    done
+
+exit 0
+} # 
+
+function origami_armageddon { # 
+
+origami_root_check
+
+    # making sure the config file exists for network archiving
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error '~/.origamirc DOES NOT EXIST.  SIMPLY USE origami erase FOR LOCAL-ONLY REMOVAL'
+    fi
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+      # added verification before accidentally destroying the world.
+      echo
+      clear
+      read -t 10 -p "THIS WILL DESTROY ORIGAMI ON "${MACHINES}". Continue? (y/N): " ARMAGEDDON
+	ARMAGEDDON_INPUT=$(echo ${ARMAGEDDON} | tr [A-Z] [a-z])
+	  if [[ "${ARMAGEDDON_INPUT}" != "y" && ${ARMAGEDDON_INPUT} != "yes" ]]; then
+	    echo "SAFELY ABORTING WORLD DESTRUCTION"
+	    exit 1
+	  else
+            echo "stopping origami service on ${MACHINES}..."
+            ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami stop &>/dev/null || echo 'UNABLE TO STOP REMOTE SERVICE'"
+
+            echo "ERASING ALL DATA AND PROGRESS ON ${MACHINES}..."
+            ssh ${SSHOPTS} root@${MACHINES} "crontab -u origami -r &>/dev/null || echo 'UNABLE TO REMOVE REMOTE CRON'"
+	    ssh ${SSHOPTS} root@${MACHINES} "origami erase; rm -f $(which origami) &>/dev/null || echo 'UNABLE TO UNINSTALL ON ${MACHINES}'"
+	  fi
+    done
+
+exit 0
+} # 
+
+function origami_stop { #
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -x /etc/rc.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    # stopping local service
+    echo "stopping origami..."
+    if [ -e /etc/arch-release ]; then
+        /etc/rc.d/origami stop &>/dev/null || origami_show_error 'UNABLE TO STOP LOCAL SERVICE.'
+    else
+        /etc/init.d/origami stop &>/dev/null || origami_show_error 'UNABLE TO STOP LOCAL SERVICE.'
+    fi
+
+exit 0
+}
+
+function origami_network_stop { #
+
+origami_root_check
+
+    # making sure the config file exists for network archiving
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error '~/.origamirc CONFIG FILE DOES NOT EXIST.'
+    fi
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+        echo "stopping origami service on ${MACHINES}..."
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami stop &>/dev/null || echo 'UNABLE TO STOP REMOTE SERVICE'"
+
+    done
+
+exit 0
+}
+
+function origami_start {
+
+origami_root_check
+
+    if [[ ! -x /etc/init.d/origami && ! -x /etc/rc.d/origami && ! -d /var/lib/origami ]]; then
+        origami_show_error 'ORIGAMI DOES NOT APPEAR TO BE INSTALLED.'
+    fi
+
+    # starting the local service
+    if [ -e /etc/arch-release ]; then
+        /etc/rc.d/origami status &>/dev/null
+    else
+        /etc/init.d/origami status &>/dev/null
+    fi
+
+    if [ $? == 0 ]; then 
+	echo "origami is already running..."
+    elif [ $? == 1 ]; then 
+        echo "starting origami..."
+	if [ -e /etc/arch-release ]; then
+            /etc/rc.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE.'
+        else
+            /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE.'
+        fi
+    fi
+
+
+exit 0
+}
+
+function origami_stats {
+
+    ORIGAMIUSER=$(grep 'username=' /var/lib/origami/foldingathome/CPU1/client.cfg | cut -d= -f2)
+    ORIGAMITEAM=$(grep 'team=' /var/lib/origami/foldingathome/CPU1/client.cfg | cut -d= -f2)
+
+    URL="http://folding.extremeoverclocking.com/xml/user_summary.php?un=${ORIGAMIUSER}&t=${ORIGAMITEAM}"
+
+    ## if stats are more than three hours old, remove and update
+    if [[ ! -e /tmp/origami-stats || $(find /tmp -type f -mmin +180 -iname "origami-stats" 2>/dev/null) ]]; then
+        rm -f /tmp/origami-stats &>/dev/null
+        wget -q -O /tmp/origami-stats "${URL}" || origami_show_error 'UNABLE TO ACCESS STATS. CHECK INTERNET CONNECTION AND TRY AGAIN.'
+    fi
+
+    ## TEAM STATS
+    TEAMNAME=$(grep "<Team_Name>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    TEAMID=$(grep "<TeamID>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    TEAMRANK=$(grep "<Rank>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    TEAMUSERS_ACTIVE=$(grep "<Users_Active>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    TEAMUSERS=$(grep "<Users>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    TEAMCHANGE_RANK_24HR=$(grep "<Change_Rank_24hr>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMCHANGE_RANK_7DAYS=$(grep "<Change_Rank_7days>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMPOINTS_24HR_AVG=$(grep "<Points_24hr_Avg>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMPOINTS_UPDATE=$(grep "<Points_Update>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMPOINTS_TODAY=$(grep "<Points_Today>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMPOINTS_WEEK=$(grep "<Points_Week>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMPOINTS=$(grep "<Points>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+    TEAMWUS=$(grep "<WUs>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | head -n1)
+
+    USERNAME=$(grep "<User_Name>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    USERID=$(grep "<UserID>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    USERRANK=$(grep "<Team_Rank>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    USEROVERALL_RANK=$(grep "<Overall_Rank>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1)
+    USERCHANGE_RANK_24HR=$(grep "<Change_Rank_24hr>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERCHANGE_RANK_7DAYS=$(grep "<Change_Rank_7days>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERPOINTS_24HR_AVG=$(grep "<Points_24hr_Avg>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERPOINTS_UPDATE=$(grep "<Points_Update>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERPOINTS_TODAY=$(grep "<Points_Today>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERPOINTS_WEEK=$(grep "<Points_Week>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERPOINTS=$(grep "<Points>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+    USERWUS=$(grep "<WUs>" /tmp/origami-stats | cut -d'>' -f2 | cut -d'<' -f1 | tail -n1)
+
+    echo
+    echo -e "Team Name:\t\t ${TEAMNAME}"
+    echo -e "Team ID:\t\t ${TEAMID}"
+    echo -e "Team Rank:\t\t ${TEAMRANK}"
+    echo -e "Active Team Members:\t ${TEAMUSERS_ACTIVE}"
+    echo -e "Total Team Members:\t ${TEAMUSERS}"
+    echo -e "24Hr Rank Change:\t ${TEAMCHANGE_RANK_24HR}"
+    echo -e "7 Day Rank Change:\t ${TEAMCHANGE_RANK_7DAY}"
+    echo -e "24Hr Point Avg:\t\t ${TEAMPOINTS_24HR_AVG}"
+    echo -e "Team Points Update:\t ${TEAMPOINTS_UPDATE}"
+    echo -e "Team Points Today:\t ${TEAMPOINTS_TODAY}"
+    echo -e "Team Points This Week:\t ${TEAMPOINTS_WEEK}"
+    echo -e "Total Team Points:\t ${TEAMPOINTS}"
+    echo -e "Team WU Completed:\t ${TEAMWUS}\n"
+
+    echo -e "User Name:\t\t ${USERNAME}"
+    echo -e "User ID:\t\t ${USERID}"
+    echo -e "Team Rank:\t\t ${USERRANK}"
+    echo -e "User Overall Rank:\t ${USEROVERALL_RANK}"
+    echo -e "24Hr Rank Change:\t ${USERCHANGE_RANK_24HR}"
+    echo -e "7 Day Rank Change:\t ${USERCHANGE_RANK_7DAY}"
+    echo -e "24Hr Point Avg:\t\t ${USERPOINTS_24HR_AVG}"
+    echo -e "User Points Update:\t ${USERPOINTS_UPDATE}"
+    echo -e "User Points Today:\t ${USERPOINTS_TODAY}"
+    echo -e "User Points This Week:\t ${USERPOINTS_WEEK}"
+    echo -e "Total User Points:\t ${USERPOINTS}"
+    echo -e "User WU Completed:\t ${USERWUS}\n"
+
+exit 0
+}
+
+function origami_network_start { #
+
+origami_root_check
+
+    # making sure the config file exists for network archiving
+    if [ ! -f ~/.origamirc ]; then
+        origami_show_error '~/.origamirc CONFIG FILE DOES NOT EXIST.'
+    fi
+
+    # dumping out the list of IPs from the ~/.origamirc
+    for MACHINES in $(grep -v "#" ~/.origamirc)
+    do
+        echo "starting origami service on ${MACHINES}..."
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE'"
+
+    done
+
+exit 0
+}
+
+BIGPACKETS=normal
+BIGPACKETS=$(echo ${BIGPACKETS} | tr [A-Z] [a-z])
+if [[ "${BIGPACKETS}" != "small" && "${BIGPACKETS}" != "normal" && "${BIGPACKETS}" != "big" ]]; then
+    origami_show_error 'BIGPACKETS OPTION REQUIRES: small, normal or big'
+fi
+
+# run sanity checks
+origami_sanity_checks
+
+# getopts 
+TEMP=$(getopt -o hc:C:p:P:H:u:t:b:k: --long help,cron:,core:,proc:,port:,host:,user:,team:,big:,key:,stats: -n "$0" -- "$@")
+
+if [[ $? != 0 || "$TEMP" = ' --' ]]; then
+    origami_usage
+fi
+
+eval set -- "$TEMP"
+
+while true ; do
+    case "$1" in
+        -h|--help) origami_usage ; shift ;;
+        -c|--cron) CRON="$2" ; shift ; shift ;;
+	-C|--core) COREPRIORITY="$2" ; shift ; shift ;;
+        -p|--proc) PROCESSOR="$2" ; shift ; shift ;;
+	-P|--port) PORT="$2" ; shift ; shift ;;
+	-H|--host) HOST="$2" ; shift ; shift ;;
+        -u|--user) ORIGAMIUSER="$2" ; shift ; shift ;;
+        -t|--team) ORIGAMITEAM="$2" ; shift ; shift ;;
+        -b|--big) BIGPACKETS="$2" ; shift ; shift ;;
+        -k|--key) PASSKEY="$2" ; shift ; shift ;;
+        --) shift ; break ;;
+    esac
+done
+
+case "$1" in
+    install) origami_install ;;
+    deploy) origami_deploy ;;
+    erase) origami_erase ;;
+    configure) origami_configure ;;
+    armageddon) origami_armageddon ;;
+    archive) origami_local_archive ;;
+    network-archive) origami_network_archive ;;
+    restore) origami_local_restore ;;
+    network-restore) origami_network_restore ;;
+    monitor) origami_local_monitor ;;
+    status) origami_local_monitor ;;
+    network-monitor) origami_network_monitor ;;
+    network-status) origami_network_monitor ;;
+    proxy) origami_proxy ;;
+    name) origami_local_name ;;
+    network-name) origami_network_name ;;
+    start) origami_start ;;
+    network-start) origami_network_start ;;
+    stop) origami_stop ;;
+    network-stop) origami_network_stop ;;
+    migrate) origami_migrate ;;
+    version) origami_version ;;
+    help) origami_usage ;;
+    stats) origami_stats ;;
+    *) echo "Invalid Option: $1" ; origami_usage ;;
+esac
+# 
+
+#####################################################################################
+# vim: set fileencoding=utf-8 : -*- coding: utf-8 -*-
+# vim: set sw=4 ts=8 sts=4 expandtab autoindent :
+###################################################################################
