@@ -160,6 +160,12 @@ origami_root_check
     done
     fi
 
+    if [[ "${ADVMETHODS}" == "1" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+        sed -i "s/type=0/type=3/g" ${CONFIG}/client.cfg
+    done
+    fi
+
     # this fixes bug #220296
     mv foldingathome/folding foldingathome/origami || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
     sed -i "98,124s/folding/origami/g" foldingathome/installService || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
@@ -625,6 +631,9 @@ port=8080
 
 [core]
 priority=0
+
+[clienttype]
+type=0
 EOF
 
 fi
@@ -779,7 +788,7 @@ exit 0
 
 function origami_network_monitor { # 
 
-origami_root_check
+#origami_root_check
 
     # making sure the config file exists for network archiving
     if [ ! -f ~/.origamirc ]; then
@@ -789,10 +798,10 @@ origami_root_check
     # dumping out the list of IPs from the ~/.origamirc
     for MACHINES in $(grep -v "#" ~/.origamirc)
     do
-	clear
-	ssh ${SSHOPTS} root@${MACHINES} "origami monitor"
-	read -n1 -t2
-	read -n1 -t5 -p "Press any key to continue" CONTINUE
+	#clear
+	ssh ${SSHOPTS} ${MACHINES} "origami monitor"
+	#read -n1 -t2
+	#read -n1 -t5 -p "Press any key to continue" CONTINUE
     done
 
 exit 0
@@ -1002,7 +1011,7 @@ fi
 origami_sanity_checks
 
 # getopts 
-TEMP=$(getopt -o hc:C:p:P:H:u:t:b:k: --long help,cron:,core:,proc:,port:,host:,user:,team:,big:,key:,stats: -n "$0" -- "$@")
+TEMP=$(getopt -o hc:C:p:P:H:u:t:b:k:a: --long help,cron:,core:,proc:,port:,host:,user:,team:,big:,key:,adv: -n "$0" -- "$@")
 
 if [[ $? != 0 || "$TEMP" = ' --' ]]; then
     origami_usage
@@ -1022,6 +1031,7 @@ while true ; do
         -t|--team) ORIGAMITEAM="$2" ; shift ; shift ;;
         -b|--big) BIGPACKETS="$2" ; shift ; shift ;;
         -k|--key) PASSKEY="$2" ; shift ; shift ;;
+        -a|--adv) ADVMETHODS=1 ; shift ; shift ;;
         --) shift ; break ;;
     esac
 done
