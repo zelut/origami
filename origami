@@ -700,7 +700,7 @@ PORT=8080
 HOST=localhost
 COREPRIORITY=idle
 
-VERSION='0.7.3'
+VERSION='0.7.4'
 
 } # 
 
