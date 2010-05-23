@@ -88,7 +88,7 @@ origami_root_check
 
     # pulling down installer file to newly created directories
     # if the above copy was successful this should speed the process.
-    FILE="http://ra.vendomar.ee/~ivo/finstall"
+    FILE="http://zelut.org/projects/misc/finstall"
     DESTFILE="/var/lib/origami/finstall"
 
     if [ -x $(which wget) ]; then
