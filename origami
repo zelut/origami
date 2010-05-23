@@ -2,21 +2,31 @@
 #
 # origami
 #
-# Copyright (C) 2007-2009 Christer Edwards <christer.edwards@ubuntu.com>
-
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-
-# You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+# Copyright 2007-2010 Christer Edwards. All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without modification, are
+# permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this list of
+# conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice, this list
+# of conditions and the following disclaimer in the documentation and/or other materials
+# provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY Christer Edwards ``AS IS'' AND ANY EXPRESS OR IMPLIED
+# WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL Christer Edwards OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+# ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# The views and conclusions contained in the software and documentation are those of the
+# authors and should not be interpreted as representing official policies, either expressed
+# or implied, of Christer Edwards.
 #
 
 function origami_install { # 
@@ -142,15 +152,15 @@ origami_root_check
     done
     fi
 
-    # setting bigpackets value
-    BIGPACKETS=$(echo ${BIGPACKETS} | tr [A-Z] [a-z])
-    if [[ "${BIGPACKETS}" != "small" && "${BIGPACKETS}" != "normal" && "${BIGPACKETS}" != "big" ]]; then
-        origami_show_error 'BIGPACKETS OPTION REQUIRES: small, normal or big'
+    # setting size value
+    SIZE=$(echo ${SIZE} | tr [A-Z] [a-z])
+    if [[ "${SIZE}" != "small" && "${SIZE}" != "normal" && "${SIZE}" != "big" ]]; then
+        origami_show_error 'SIZE OPTION REQUIRES: small, normal or big'
     fi
 
-    if [[ "${BIGPACKETS}" == "big" || "${BIGPACKETS}" == "small" ]]; then
+    if [[ "${SIZE}" == "big" || "${SIZE}" == "small" ]]; then
     for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
-        sed -i "s/bigpackets=normal/bigpackets="$BIGPACKETS"/g" ${CONFIG}/client.cfg
+        sed -i "s/bigpackets=normal/bigpackets="$SIZE"/g" ${CONFIG}/client.cfg
     done
     fi
 
@@ -272,7 +282,7 @@ origami_root_check
 
     # that should cover it
     echo "Migration should be complete. Run 'origami monitor' to verify continued progress."
-    echo 'Please report feedback to https://bugs.launchpad.net/origami'
+    echo 'Please report feedback to http://origami.zelut.org/flyspray/'
 
 exit 0
 }
@@ -300,7 +310,7 @@ origami_root_check
     	origami_show_warning 'THERE MAY BE FILES REMAINING IN /var/lib/origami'
     fi
 
-    echo 'Please report feedback at https://bugs.launchpad.net/origami'
+    echo 'Please report feedback at http://origami.zelut.org/flyspray/'
 
 exit 0
 } # 
@@ -344,13 +354,13 @@ origami_root_check
 	fi
     
     	echo "running installer on ${MACHINES}"
-    	ssh ${SSHOPTS} root@${MACHINES} "origami install -c "$CRON" -p "$PROCESSOR" -P "$PORT" -H "$HOST" -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" -b "$BIGPACKETS" -k "$PASSKEY" &> /tmp/origami.log"
+    	ssh ${SSHOPTS} root@${MACHINES} "origami install -c "$CRON" -p "$PROCESSOR" -P "$PORT" -H "$HOST" -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" -s "$SIZE" -k "$PASSKEY" &> /tmp/origami.log"
 
     echo "Installation of ${MACHINES} will be finished momentarily."
     done
 
     echo "If you experienced any issues during this network deployment"
-    echo "please submit a bug to https://bugs.launchpad.net/origami."
+    echo "please submit a bug to http://origami.zelut.org/flyspray/"
     
 exit 0
 } # 
@@ -600,7 +610,7 @@ Options:
 Originally created by Christer Edwards <christer.edwards@ubuntu.com>.
 This application released under the GPLv2 (see copyright)
 
-Report bugs to https://bugs.launchpad.net/origami
+Report bugs to http://origami.zelut.org/flyspray/
 
 EOF
 
@@ -687,12 +697,12 @@ if [[ ! -x $(which wget) && ! -x $(which curl) ]]; then
 fi
 
 # this is used often enough, lets define it centrally
-SSHOPTS="-f -4 -o StrictHostKeyChecking=no"
+SSHOPTS="-4 -o StrictHostKeyChecking=no"
 
 # define some default variables used by the installer
 ORIGAMIUSER=Anonymous
 PASSKEY=
-BIGPACKETS=normal
+SIZE=normal
 ORIGAMITEAM=0
 PROCESSOR=i386
 CRON=0
@@ -788,8 +798,6 @@ exit 0
 
 function origami_network_monitor { # 
 
-#origami_root_check
-
     # making sure the config file exists for network archiving
     if [ ! -f ~/.origamirc ]; then
         origami_show_error 'NETWORK MONITORING REQUIRES THE ~/.origamirc CONFIG!'
@@ -798,10 +806,7 @@ function origami_network_monitor { #
     # dumping out the list of IPs from the ~/.origamirc
     for MACHINES in $(grep -v "#" ~/.origamirc)
     do
-	#clear
 	ssh ${SSHOPTS} ${MACHINES} "origami monitor"
-	#read -n1 -t2
-	#read -n1 -t5 -p "Press any key to continue" CONTINUE
     done
 
 exit 0
@@ -1001,17 +1006,17 @@ origami_root_check
 exit 0
 }
 
-BIGPACKETS=normal
-BIGPACKETS=$(echo ${BIGPACKETS} | tr [A-Z] [a-z])
-if [[ "${BIGPACKETS}" != "small" && "${BIGPACKETS}" != "normal" && "${BIGPACKETS}" != "big" ]]; then
-    origami_show_error 'BIGPACKETS OPTION REQUIRES: small, normal or big'
+SIZE=normal
+SIZE=$(echo ${SIZE} | tr [A-Z] [a-z])
+if [[ "${SIZE}" != "small" && "${SIZE}" != "normal" && "${SIZE}" != "big" ]]; then
+    origami_show_error 'SIZE OPTION REQUIRES: small, normal or big'
 fi
 
 # run sanity checks
 origami_sanity_checks
 
 # getopts 
-TEMP=$(getopt -o hc:C:p:P:H:u:t:b:k:a: --long help,cron:,core:,proc:,port:,host:,user:,team:,big:,key:,adv: -n "$0" -- "$@")
+TEMP=$(getopt -o hc:C:p:P:H:u:t:s:k:a: --long help,cron:,core:,proc:,port:,host:,user:,team:,size:,key:,adv: -n "$0" -- "$@")
 
 if [[ $? != 0 || "$TEMP" = ' --' ]]; then
     origami_usage
@@ -1029,9 +1034,9 @@ while true ; do
 	-H|--host) HOST="$2" ; shift ; shift ;;
         -u|--user) ORIGAMIUSER="$2" ; shift ; shift ;;
         -t|--team) ORIGAMITEAM="$2" ; shift ; shift ;;
-        -b|--big) BIGPACKETS="$2" ; shift ; shift ;;
+        -s|--size) SIZE="$2" ; shift ; shift ;;
         -k|--key) PASSKEY="$2" ; shift ; shift ;;
-        -a|--adv) ADVMETHODS=1 ; shift ; shift ;;
+        -a|--adv) ADVMETHODS="$2" ; shift ; shift ;;
         --) shift ; break ;;
     esac
 done
