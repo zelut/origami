@@ -1,8 +1,13 @@
 #!/bin/bash
 #
 # origami
+# Version 0.7.5
+# Created by Christer Edwards
+# Updated by Johnathan Falk
+# Last Update 1-6-2011
 #
 # Copyright 2007-2010 Christer Edwards. All rights reserved.
+#
 #
 # Redistribution and use in source and binary forms, with or without modification, are
 # permitted provided that the following conditions are met:
@@ -98,7 +103,7 @@ origami_root_check
 
     # pulling down installer file to newly created directories
     # if the above copy was successful this should speed the process.
-    FILE="http://zelut.org/projects/misc/finstall"
+    FILE="http://ra.vendomar.ee/~ivo/finstall"
     DESTFILE="/var/lib/origami/finstall"
 
     if [ -x $(which wget) ]; then
@@ -710,7 +715,7 @@ PORT=8080
 HOST=localhost
 COREPRIORITY=idle
 
-VERSION='0.7.4'
+VERSION='0.7.5'
 
 } # 
 
