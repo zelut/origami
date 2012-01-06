@@ -3,10 +3,10 @@
 # origami
 # Version 0.7.5
 # Created by Christer Edwards
-# Updated by Johnathan Falk
-# Last Update 1-6-2011
+# Updated by Johnathan Falk (2012-01-06)
+# Updated by Brian Long (2011-12-16)
 #
-# Copyright 2007-2010 Christer Edwards. All rights reserved.
+# Copyright 2007-2012 Christer Edwards. All rights reserved.
 #
 #
 # Redistribution and use in source and binary forms, with or without modification, are
@@ -97,9 +97,11 @@ origami_root_check
 
     # this will check for pre-downloaded FAH504-Linux.exe file (shared from
     # server) and use that to speed up the wget download. (0.6.6.1)
-    if [ -x /tmp/FAH504-Linux.exe ]; then
-        cp /tmp/FAH504-Linux.exe /var/lib/origami/foldingathome/ || origami_show_warning 'UNABLE TO COPY PRE-FETCHED FILE, ATTEMPTING WGET INSTEAD...'
-    fi
+    for cli in FAH504-Linux.exe FAH6.02-Linux.tgz FAH6.29-Linux.tgz FAH6.34-Linux64.tgz; do
+        if [ -r /tmp/$cli ]; then
+            cp /tmp/$cli /var/lib/origami/foldingathome/ || origami_show_warning 'UNABLE TO COPY PRE-FETCHED FILE, ATTEMPTING WGET INSTEAD...'
+        fi
+    done
 
     # pulling down installer file to newly created directories
     # if the above copy was successful this should speed the process.
@@ -181,6 +183,12 @@ origami_root_check
     done
     fi
 
+    if [[ ! -z "${EXTRAPARMS}" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+        sed -i "s/extraparms=/extraparms="$EXTRAPARMS"/g" ${CONFIG}/client.cfg
+    done
+    fi
+
     # this fixes bug #220296
     mv foldingathome/folding foldingathome/origami || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
     sed -i "98,124s/folding/origami/g" foldingathome/installService || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
@@ -201,10 +209,10 @@ origami_root_check
     /var/lib/origami/foldingathome/installService &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO INSTALL!'
 
     # starting init.d script
-    if [ -e /etc/arch-release ]; then
-        /etc/rc.d/origami start &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO START!'
+    if [ "$START" == 1 ]; then
+        $INITSCRIPT start &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO START!'
     else
-        /etc/init.d/origami start &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO START!'
+	echo 'ORIGAMI NOT STARTED'
     fi
 
     # minor cleanup for kickstart installations - harmless if deploying regularly
@@ -283,7 +291,7 @@ origami_root_check
     popd
 
     # lets restart the new installation now that the old data is in place
-    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+    $INITSCRIPT start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
 
     # that should cover it
     echo "Migration should be complete. Run 'origami monitor' to verify continued progress."
@@ -344,22 +352,25 @@ origami_root_check
 
         # this is the origami @ home client itself.  Does this violate the
         # distribution license? :)
-        if [ -x /var/lib/origami/foldingathome/FAH504-Linux.exe ]; then
-            scp -q /var/lib/origami/foldingathome/FAH504-Linux.exe root@${MACHINES}:/tmp/
-        fi
+        for cli in FAH504-Linux.exe FAH6.02-Linux.tgz FAH6.29-Linux.tgz; do
+            if [ -x /var/lib/origami/foldingathome/$cli ]; then
+                scp -q /var/lib/origami/foldingathome/$cli root@${MACHINES}:/tmp/
+            fi
+        done
 
         # TODO: add test statement to check for existing origami file.
         echo "copying installer to ${MACHINES}..."
-	if [ -x /usr/bin/origami ]; then
-    	    scp -q /usr/bin/origami root@${MACHINES}:/usr/bin/
-	elif [ -x ./origami ]; then
-	    scp -q ./origami root@${MACHINES}:/usr/bin/
-	else
-	    origami_show_error 'UNABLE TO FIND LOCAL ORIGAMI EXECUTABLE'
-	fi
+        COPIED=false
+	for file in ./origami /usr/bin/origami; do
+	    if [ -x $file ]; then
+    	        scp -q $file root@${MACHINES}:/usr/bin/
+                COPIED=true
+            fi
+        done
+        $COPIED || origami_show_error 'UNABLE TO FIND LOCAL ORIGAMI EXECUTABLE'
     
     	echo "running installer on ${MACHINES}"
-    	ssh ${SSHOPTS} root@${MACHINES} "origami install -c "$CRON" -p "$PROCESSOR" -P "$PORT" -H "$HOST" -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" -s "$SIZE" -k "$PASSKEY" &> /tmp/origami.log"
+    	ssh ${SSHOPTS} root@${MACHINES} "origami install -c "$CRON" -p "$PROCESSOR" -P "$PORT" -H "$HOST" -u "$ORIGAMIUSER" -t "$ORIGAMITEAM" -s "$SIZE" -k "$PASSKEY" -a "$ADVMETHODS" -e "$EXTRAPARMS" --autostart "$START" &> /tmp/origami.log"
 
     echo "Installation of ${MACHINES} will be finished momentarily."
     done
@@ -392,7 +403,7 @@ origami_root_check
 
     # restarting local service
     echo "restarting the local service"
-    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+    $INITSCRIPT start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
 
 exit 0
 } # 
@@ -427,7 +438,7 @@ origami_root_check
     echo "restoring local archive"
     tar -C / -xf ~/.origami/$(hostname)-*.tar.bz2 &>/dev/null || origami_show_error 'UNABLE TO RESTORE LOCAL ORIGAMI DATA!'
     echo "restarting local service"
-    /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
+    $INITSCRIPT start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE!'
 
 exit 0
 } # 
@@ -453,7 +464,7 @@ origami_root_check
 	ssh ${SSHOPTS} root@${MACHINES} "rm ~/${MACHINES}-$(date +%F).tar.bz2 &>/dev/null"
 
         echo "restarting origami service on ${MACHINES}..."
-        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE!'"
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || /etc/rc.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE!'"
     done
 
 exit 0
@@ -638,6 +649,7 @@ asknet=no
 machineid=1
 bigpackets=normal
 passkey=
+extra_parms=
 
 [http]
 active=no
@@ -664,16 +676,16 @@ cat << EOF > /var/lib/origami/origami.cron
 # uncomment the cron entries below to automate starting and stopping the
 # origami service during business hours
 
-0 8  * * * /etc/init.d/origami stop &>/dev/null
-0 17 * * * /etc/init.d/origami start &>/dev/null
+0 8  * * * $INITSCRIPT stop &>/dev/null
+0 17 * * * $INITSCRIPT start &>/dev/null
 EOF
 else
 cat << EOF > /var/lib/origami/origami.cron
 # uncomment the cron entries below to automate starting and stopping the
 # origami service during business hours
 
-#0 8  * * * /etc/init.d/origami stop &>/dev/null
-#0 17 * * * /etc/init.d/origami start &>/dev/null
+#0 8  * * * $INITSCRIPT stop &>/dev/null
+#0 17 * * * $INITSCRIPT start &>/dev/null
 EOF
 fi
 
@@ -714,6 +726,16 @@ CRON=0
 PORT=8080
 HOST=localhost
 COREPRIORITY=idle
+ADVMETHODS=0
+EXTRAPARAMS=
+START=0
+BRIEF=0
+
+if [ -e /etc/arch-release ]; then
+    INITSCRIPT=/etc/rc.d/origami
+else
+    INITSCRIPT=/etc/init.d/origami
+fi
 
 VERSION='0.7.5'
 
@@ -764,39 +786,70 @@ function origami_local_monitor { #
     else
         /etc/init.d/origami status | grep 'Status of FAH client(s):' || origami_show_error 'UNABLE TO GET LOCAL STATUS'
     fi
-    echo
-    # this gathers the username, team and completed units from all processors and puts it in a file
-    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
-        NUM=$(echo "${CONFIG}" | cut -c35 -)
-	echo "Your Username: $(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
-	echo "Your Team: $(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
-	echo "Completed WU on CPU #${NUM}: $(grep 'local=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
-    done
-    # this reads the file, and shows only unique lines
-    # this facilitates different usernames, teams or completed units to be reported
-    # on a per-processor basis.
-    cat /tmp/origami-status | sort | uniq
+    if [ "$BRIEF" == 0 ]; then
+        echo
+        # this gathers the username, team and completed units from all processors and puts it in a file
+        for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+            if [ -r "${CONFIG}"/FAHlog.txt ]; then
+                ERR=$(egrep -A10 "Cleaning up work directory" "${CONFIG}"/FAHlog.txt | grep 'get work failed' | wc -l)
+                if [ "$ERR" -gt 0 ]; then
+                    echo "!!! Failed to get new work !!!"
+                fi
+            fi
+            NUM=$(echo "${CONFIG}" | cut -c35 -)
+	    echo "Your Username: $(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+	    echo "Your Team: $(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+	    echo "Completed WU on CPU #${NUM}: $(grep 'local=' ${CONFIG}/client.cfg | cut -d= -f2)" >> /tmp/origami-status
+        done
+        # this reads the file, and shows only unique lines
+        # this facilitates different usernames, teams or completed units to be reported
+        # on a per-processor basis.
+        cat /tmp/origami-status | sort | uniq
 
-    for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
-	ORIGAMIUSER=$(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)
-	ORIGAMITEAM=$(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)
-    done
-    echo
-    echo "User ranking URL:"
-    echo "http://kakaostats.com/t.php?filter=active&col=2&t="${ORIGAMITEAM}"&search_text="${ORIGAMIUSER}""
-    # we delete the file after we've reported the results so the next time we monitor
-    # we've started fresh
-    rm /tmp/origami-status &>/dev/null
-    echo
+        for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+	    ORIGAMIUSER=$(grep 'username=' ${CONFIG}/client.cfg | cut -d= -f2)
+	    ORIGAMITEAM=$(grep 'team=' ${CONFIG}/client.cfg | cut -d= -f2)
+        done
+        echo
+        echo "User ranking URL:"
+        echo "http://kakaostats.com/t.php?filter=active&col=2&t="${ORIGAMITEAM}"&search_text="${ORIGAMIUSER}""
+        # we delete the file after we've reported the results so the next time we monitor
+        # we've started fresh
+        rm /tmp/origami-status &>/dev/null
+        echo
 
-    for CONFIG in $(ls -d "${origamihome}"/foldingathome/CPU*/); do
-        if [ -r "${CONFIG}"/unitinfo.txt ]; then
-            cat "${CONFIG}"/unitinfo.txt
-            echo
-        else
-            echo "No work units have been assigned yet. Please check status again later."
-        fi
-    done
+        for CONFIG in $(ls -d "${origamihome}"/foldingathome/CPU*/); do
+            if [ -r "${CONFIG}"/unitinfo.txt ]; then
+                cat "${CONFIG}"/unitinfo.txt
+                echo
+            else
+                echo "No work units have been assigned yet. Please check status again later."
+            fi
+        done
+    else
+        for CONFIG in $(ls -d ${origamihome}/foldingathome/CPU*/); do 
+            if [ -r "${CONFIG}"/FAHlog.txt ]; then
+                ERR=$(egrep -A10 "Cleaning up work directory" "${CONFIG}"/FAHlog.txt | grep 'get work failed' | wc -l)
+                if [ "$ERR" -gt 0 ]; then
+                    echo "!!! Failed to get new work !!!"
+                fi
+            fi
+            NUM=$(echo "${CONFIG}" | cut -c35 -)
+	    echo "Completed WU on CPU #${NUM}: $(grep 'local=' ${CONFIG}/client.cfg | cut -d= -f2)" | tail -1 >>/tmp/origami-status
+            CORE=$(ps -e | egrep '[F]ahCore' | awk '{print $4}')
+            ARGS=$(ps -ef | egrep '[f]ah6' | awk '{print $9,$10,$11}')
+            echo "Core: $CORE $ARGS" >>/tmp/origami-status
+
+
+            if [ -r "${CONFIG}"/unitinfo.txt ]; then
+		egrep "time:|rogress:" "${CONFIG}"/unitinfo.txt
+            else
+                echo "No work units have been assigned yet. Please check status again later."
+            fi 
+        done
+        cat /tmp/origami-status | sort | uniq
+        rm /tmp/origami-status &>/dev/null
+    fi
 
 exit 0
 } # 
@@ -808,10 +861,15 @@ function origami_network_monitor { #
         origami_show_error 'NETWORK MONITORING REQUIRES THE ~/.origamirc CONFIG!'
     fi
 
+    BRIEFCMD=""
+    if [ "$BRIEF" == 1 ]; then
+	BRIEFCMD="-b 1"
+    fi
+
     # dumping out the list of IPs from the ~/.origamirc
     for MACHINES in $(grep -v "#" ~/.origamirc)
     do
-	ssh ${SSHOPTS} ${MACHINES} "origami monitor"
+	ssh ${SSHOPTS} ${MACHINES} "origami monitor $BRIEFCMD"
     done
 
 exit 0
@@ -908,11 +966,7 @@ origami_root_check
 	echo "origami is already running..."
     elif [ $? == 1 ]; then 
         echo "starting origami..."
-	if [ -e /etc/arch-release ]; then
-            /etc/rc.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE.'
-        else
-            /etc/init.d/origami start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE.'
-        fi
+	$INITSCRIPT start &>/dev/null || origami_show_error 'UNABLE TO START LOCAL SERVICE.'
     fi
 
 
@@ -1004,7 +1058,7 @@ origami_root_check
     for MACHINES in $(grep -v "#" ~/.origamirc)
     do
         echo "starting origami service on ${MACHINES}..."
-        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE'"
+        ssh ${SSHOPTS} root@${MACHINES} "/etc/init.d/origami start &>/dev/null || /etc/rc.d/origami start &>/dev/null || echo 'UNABLE TO START REMOTE SERVICE'"
 
     done
 
@@ -1021,7 +1075,7 @@ fi
 origami_sanity_checks
 
 # getopts 
-TEMP=$(getopt -o hc:C:p:P:H:u:t:s:k:a: --long help,cron:,core:,proc:,port:,host:,user:,team:,size:,key:,adv: -n "$0" -- "$@")
+TEMP=$(getopt -o hbc:C:p:P:H:u:t:s:k:a:e: --long help,brief,cron:,core:,proc:,port:,host:,user:,team:,size:,key:,adv:,extraparms,autostart: -n "$0" -- "$@")
 
 if [[ $? != 0 || "$TEMP" = ' --' ]]; then
     origami_usage
@@ -1042,6 +1096,9 @@ while true ; do
         -s|--size) SIZE="$2" ; shift ; shift ;;
         -k|--key) PASSKEY="$2" ; shift ; shift ;;
         -a|--adv) ADVMETHODS="$2" ; shift ; shift ;;
+	-b|--brief) BRIEF=1 ; shift ;;
+	-e|--extraparms) EXTRAPARMS="$2" ; shift; shift ;;
+	--autostart) START="$2" ; shift ; shift ;;
         --) shift ; break ;;
     esac
 done
