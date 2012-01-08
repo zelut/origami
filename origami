@@ -107,7 +107,7 @@ origami_root_check
 
     # Master File Pull
     MFBAD=0
-    FILE="http://ra.vendomar.ee/~ivo/finstallBAD"
+    FILE="http://ra.vendomar.ee/~ivo/finstall"
     DESTFILE="/var/lib/origami/finstall"
     if [ -x $(which wget) ]; then
         wget --quiet -O $DESTFILE -c $FILE || origami_show_warning 'Wget retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!' && MFBAD=1
@@ -118,7 +118,7 @@ origami_root_check
     fi
 
 if [ $MFBAD -eq 1 ]; then
-    FILE="http://ra.vendomar.ee/~ivo/finstall"
+    FILE="http://zelut.org/projects/misc/finstall"
     DESTFILE="/var/lib/origami/finstall"
     if [ -x $(which wget) ]; then
         wget --quiet -O $DESTFILE -c $FILE || origami_show_warning 'Wget retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!'
