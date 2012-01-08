@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # origami
-# Version 0.7.5
+# Version 0.7.6
 # Created by Christer Edwards
 # Updated by Johnathan Falk (2012-01-06)
 # Updated by Brian Long (2011-12-16)
@@ -105,16 +105,32 @@ origami_root_check
 
     # pulling down installer file to newly created directories
     # if the above copy was successful this should speed the process.
+    # Use the latest master version and fall back to personal server if it fails   
+
+    # Master File Pull
+    MFBAD=0
     FILE="http://ra.vendomar.ee/~ivo/finstall"
     DESTFILE="/var/lib/origami/finstall"
-
     if [ -x $(which wget) ]; then
-        wget --quiet -O $DESTFILE -c $FILE || origami_show_error 'WGET RETRIEVAL FAILED!'
+        wget --quiet -O $DESTFILE -c $FILE || origami_show_warning 'Wget retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!' && MFBAD=1
     elif [ -x $(which curl) ]; then
-        curl -o $DESTFILE --silent $FILE || origami_show_error 'CURL RETRIEVAL FAILED!'
+        curl -o $DESTFILE --silent $FILE || origami_show_warning 'CURL retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!' && MFBAD=1
     else
         origami_show_error 'INSTALLER RETRIEVAL FAILED. YOU NEED WGET OR CURL'
     fi
+
+if [ $MFBAD -eq 1 ]; then
+    FILE="http://zelut.org/projects/misc/finstall"
+    DESTFILE="/var/lib/origami/finstall"
+    if [ -x $(which wget) ]; then
+        wget --quiet -O $DESTFILE -c $FILE || origami_show_warning 'Wget retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!'
+    elif [ -x $(which curl) ]; then
+        curl -o $DESTFILE --silent $FILE || origami_show_warning 'CURL retrieval failed of original. Falling back to mirror of script. Maybe outdated. YOU HAVE BEEN WARNED!'
+    else
+        origami_show_error 'INSTALLER RETRIEVAL FAILED. YOU NEED WGET OR CURL'
+    fi
+fi
+
 
     # changing ownership on finstall
     chown -R origami. finstall &>/dev/null || origami_show_error 'UNABLE TO CHANGE OWNERSHIP'
@@ -123,9 +139,9 @@ origami_root_check
     # running installer on auto-pilot
     echo "INSTALLING... PLEASE BE PATIENT"
     if [ "${PROCESSOR}" == "amd64" ]; then
-        su - origami -c "./finstall auto smp skip3rd" &>/dev/null || origami_show_error 'SMP INSTALLER FAILED'
+        su -l origami -c "./finstall auto smp skip3rd" &>/dev/null || origami_show_error 'SMP INSTALLER FAILED'
     else
-        su - origami -c "./finstall auto skip3rd" &>/dev/null || origami_show_error 'INSTALLER FAILED'
+        su -l origami -c "./finstall auto skip3rd" &>/dev/null || origami_show_error 'INSTALLER FAILED'
     fi
 
     # moving config file into place / updating config
@@ -207,6 +223,14 @@ origami_root_check
 
     # starting installService
     /var/lib/origami/foldingathome/installService &>/dev/null || origami_show_error 'STARTUP SCRIPT FAILED TO INSTALL!'
+
+
+    # Fixing bug with su - which should be su -l
+    if [ -e /etc/arch-release ]; then
+       sed -i 's/su\ \-\ \$RunAsUser/su\ \-l\ \$RunAsUser/' /etc/rc.d/origami
+    else
+       sed -i 's/su\ \-\ \$RunAsUser/su\ \-l\ \$RunAsUser/' /etc/init.d/origami
+    fi
 
     # starting init.d script
     if [ "$START" == 1 ]; then
