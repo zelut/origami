@@ -197,6 +197,14 @@ fi
     done
     fi
 
+    NUMPROCS=0
+    NUMPROCS=$(cat /proc/cpuinfo | grep processor | wc -l)
+    if [[ $NUMPROCS -eq 1 && "${PROCESSOR}" == "amd64" ]]; then
+    for CONFIG in $(ls -d /var/lib/origami/foldingathome/CPU*/); do
+       sed -i 's/\-smp//' ${CONFIG}/FaH
+    done
+    fi
+
     # this fixes bug #220296
     mv foldingathome/folding foldingathome/origami || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
     sed -i "98,124s/folding/origami/g" foldingathome/installService || origami_show_error 'STARTUP SCRIPT MIGRATION FAILED'
